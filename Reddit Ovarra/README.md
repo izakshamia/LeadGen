@@ -1,65 +1,54 @@
-# Reddit Ovarra Pipeline
+# Reddit Ovarra Pipeline (Minimal, Checkpointed)
 
-This directory contains scripts and utilities for collecting, classifying, and responding to Reddit posts related to DMCA takedowns, OnlyFans leaks, and unauthorized adult content distribution. The workflow is designed to help identify and support users affected by these issues, including generating empathetic founder-signed replies.
+This directory contains a minimal, robust pipeline for collecting, classifying, and responding to Reddit posts related to DMCA takedowns, OnlyFans leaks, and unauthorized adult content distribution. The workflow is designed to help identify and support users affected by these issues, including generating empathetic founder-signed replies.
 
 ## Pipeline Overview
 
 1. **Scrape Reddit Posts**
-   - `subreddit_keyword_scraper.py`: Collects posts from target subreddits and saves them as JSON.
-
+   - Fetches posts from target subreddits using keywords.
+   - Checkpoint: `scraped_posts.json`
 2. **Classify Relevance**
-   - `reddit_comments_analyzer.py`: Uses OpenAI to classify posts as relevant or not to DMCA/leaks/non-consensual content. Outputs only relevant posts.
-
+   - Uses OpenAI to classify posts as relevant or not to DMCA/leaks/non-consensual content.
+   - Checkpoint: `relevant_posts.json`
 3. **Fetch Comments**
-   - `fetch_reddit_comments.py`: For each relevant post, fetches all comments and subcomments (full comment tree) from Reddit and attaches them to the post.
-
+   - Fetches all comments and subcomments (full comment tree) from Reddit and attaches them to the post.
+   - Checkpoint: `posts_with_comments.json`
 4. **Generate Empathetic Replies**
-   - `generate_ovarra_replies.py`: Sends the full thread (post + comments) to OpenAI and generates an empathetic, founder-signed reply referencing the user's issue and offering Ovarra support.
+   - Sends the full thread (post + comments) to OpenAI and generates an empathetic, founder-signed reply.
+   - Checkpoint: `final_posts.json`
 
-5. **Utilities & Analysis**
-   - `reddit_utils.py`, `reddit_analyzer.py`: Helper functions and analysis tools for Reddit data.
-
-## Files in This Directory
-
-- `subreddit_keyword_scraper.py`: Scrapes Reddit posts by keyword/subreddit.
-- `reddit_comments_analyzer.py`: Classifies posts for DMCA/leak relevance.
-- `fetch_reddit_comments.py`: Fetches and attaches full comment trees.
-- `generate_ovarra_replies.py`: Generates empathetic Ovarra replies per thread.
-- `reddit_utils.py`: Utility functions for Reddit data.
-- `reddit_analyzer.py`: Additional analysis tools.
-- `requirements.txt`: Python dependencies.
-- `README.md`: This file.
-
-## Requirements
-
-- Python 3.8+
-- OpenAI API key (set in `.env` as `OPENAI_API_KEY`)
-- Reddit API credentials (if using authenticated scraping)
-- See `requirements.txt` for package list
+## Checkpointing
+- The pipeline saves progress after each major step.
+- If a step fails, you can resume from the last successful checkpoint without repeating previous API calls.
+- Use `--force` to ignore checkpoints and re-run all steps from scratch.
 
 ## Usage
 
-1. Scrape posts:
-   ```bash
-   python subreddit_keyword_scraper.py
-   ```
-2. Classify for relevance:
-   ```bash
-   python reddit_comments_analyzer.py
-   ```
-3. Fetch comments:
-   ```bash
-   python fetch_reddit_comments.py
-   ```
-4. Generate Ovarra replies:
-   ```bash
-   python generate_ovarra_replies.py
-   ```
+```bash
+cd Reddit\ Ovarra
+python pipeline.py [--subreddits SUB1 SUB2 ...] [--discover] [--seed-subreddit SEED] [--keywords KW1 KW2 ...] [--post-limit N] [--debug] [--force]
+```
 
-## Output Files
-- `reddit_relevance_results.json`: Relevant posts only
-- `reddit_relevance_results_with_comments.json`: Posts with full comment trees
-- `reddit_relevance_results_with_ovarra_reply.json`: Posts with Ovarra founder replies
+- `--subreddits`: List of subreddits to search (default: common subreddits)
+- `--discover`: Discover related subreddits from a seed
+- `--seed-subreddit`: Subreddit to start discovery from (default: CamGirlProblems)
+- `--keywords`: Keywords to search for (default: dmca leak takedown copyright)
+- `--post-limit`: Number of posts per keyword (default: 10)
+- `--debug`: Print debug information
+- `--force`: Ignore checkpoints and re-run all steps
 
-## Contact
-For questions or support, contact the Ovarra team.
+## Requirements
+- Python 3.8+
+- OpenAI API key (set in `.env` as `OPENAI_API_KEY`)
+- Reddit API credentials are not required for public scraping
+- See `requirements.txt` for package list
+
+## File Structure
+- `pipeline.py`: Main entry point for the pipeline
+- `api_utils.py`: All Reddit/OpenAI API and utility logic
+- `models.py`: Data models for posts and comments
+- `requirements.txt`: Python dependencies
+- `README.md`: This file
+
+## Output
+- Final results with Ovarra replies are printed and saved to `final_posts.json`
