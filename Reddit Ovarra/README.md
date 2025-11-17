@@ -62,11 +62,17 @@ python pipeline.py [--subreddits SUB1 SUB2 ...] [--discover] [--seed-subreddit S
 - `pipeline.py`: Main entry point for the pipeline
 - `api_utils.py`: All Reddit/Gemini API and utility logic
 - `models.py`: Data models for posts and comments
+- `subreddit_analytics.py`: Analytics and performance tracking
 - `requirements.txt`: Python dependencies
 - `scripts/`: Utility scripts for working with results
   - `list_posts.py`: View posts from checkpoint files
   - `regenerate_replies.py`: Regenerate all replies
   - `regenerate_single.py`: Regenerate one specific reply
+  - `view_analytics.py`: View subreddit performance analytics
+- `docs/`: Documentation
+  - `FEATURES.md`: Complete feature list
+  - `SCRIPTS.md`: Utility scripts documentation
+  - `ANALYTICS_EXAMPLE.md`: Analytics guide with examples
 - `README.md`: This file
 
 ## Output
@@ -85,6 +91,31 @@ python3 scripts/regenerate_replies.py --debug
 
 # Regenerate one specific reply
 python3 scripts/regenerate_single.py --index 3 --debug
+
+# View subreddit performance analytics
+python3 scripts/view_analytics.py
 ```
 
-See `scripts/README.md` for more details.
+See `docs/SCRIPTS.md` for more details.
+
+## Subreddit Analytics
+
+The pipeline automatically tracks subreddit performance:
+- **Conversion rates** (relevant posts / total posts)
+- **Top performers** to prioritize
+- **Low performers** to remove
+- **New subreddit discoveries** from post mentions
+
+View analytics anytime:
+```bash
+python3 scripts/view_analytics.py
+```
+
+See `docs/ANALYTICS_EXAMPLE.md` for detailed examples.
+
+## Documentation
+
+- **[README.md](README.md)** - Main documentation (this file)
+- **[docs/FEATURES.md](docs/FEATURES.md)** - Complete feature list and roadmap
+- **[docs/SCRIPTS.md](docs/SCRIPTS.md)** - Utility scripts guide
+- **[docs/ANALYTICS_EXAMPLE.md](docs/ANALYTICS_EXAMPLE.md)** - Analytics examples and usage

@@ -43,6 +43,9 @@ python3 scripts/regenerate_replies.py --input posts_with_comments.json --output 
 ### 3. `regenerate_single.py` - Regenerate One Reply
 Regenerate reply for a specific post by index or URL.
 
+### 4. `view_analytics.py` - Subreddit Performance Analytics
+View performance metrics and discover high-converting subreddits.
+
 ```bash
 # Regenerate post #3
 python3 scripts/regenerate_single.py --index 3
@@ -58,6 +61,24 @@ python3 scripts/regenerate_single.py --index 5 --debug
 - Testing reply generation on specific posts
 - Iterating on difficult posts
 - Quick testing without processing all posts
+
+```bash
+# View current analytics
+python3 scripts/view_analytics.py
+
+# Update analytics from latest pipeline run
+python3 scripts/view_analytics.py --update
+
+# Export stats to JSON
+python3 scripts/view_analytics.py --export stats_backup.json
+```
+
+**Features:**
+- Track conversion rates per subreddit
+- Identify top-performing subreddits
+- Discover new subreddits mentioned in posts
+- Find low-performing subreddits to remove
+- Get recommendations for next run
 
 ## Workflow Examples
 

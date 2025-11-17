@@ -15,11 +15,59 @@ CHECKPOINTS = [
     ("final_posts.json", "Generating Ovarra replies", "generate_replies")
 ]
 
-DEFAULT_SUBREDDITS = ["CamGirlProblems", "OnlyFansAdvice", "CreatorAdvice", "SexWorkersOnly", "LegalAdvice"]
-DEFAULT_KEYWORDS = ["onlyfans leak", "content stolen", "dmca help", "nsfw leak", "privacy violation", "content removal"]
+# Essential Advice & Support (HIGH PRIORITY - Creators asking for help)
+ADVICE_SUBREDDITS = [
+    "CamGirlProblems",      # Cam model troubleshooting & support
+    "OnlyFansAdvice",       # OF tips & platform optimization
+    "AdultContentCreators", # All adult creator advice
+    "SexWorkers",           # Broader sex work community
+    "CreatorsAdvice",       # NSFW/SFW creator questions
+]
 
-# Subreddits where promotional replies are NOT allowed
-NO_PROMO_SUBREDDITS = ["CamGirlProblems", "SexWorkersOnly"]
+# OnlyFans Specific (MEDIUM PRIORITY - Platform-specific issues)
+ONLYFANS_SUBREDDITS = [
+    "OnlyFans",             # Platform updates & Q&A
+    "OnlyFansCentral",      # Account growth & tips
+    "OnlyfansCreators",     # Creator experiences
+    "OnlyFansBabes",        # NSFW promotion & networking
+]
+
+# Camming & Streaming (HIGH PRIORITY - Cam-specific issues)
+CAMMING_SUBREDDITS = [
+    "CamGirls",             # Cam performer networking
+    "Camming",              # Cam advice & tips
+]
+
+# Fansly Alternative
+FANSLY_SUBREDDITS = [
+    "Fansly",               # Fansly platform
+    "fanslypromotions",     # Fansly promotion
+]
+
+# Default list (start with highest priority - advice & support focused)
+DEFAULT_SUBREDDITS = [
+    "CamGirlProblems",
+    "OnlyFansAdvice", 
+    "AdultContentCreators",
+    "SexWorkers",
+    "CreatorsAdvice",
+    "CamGirls"
+]
+
+# All available subreddits (for discovery and testing)
+ALL_CREATOR_SUBREDDITS = ADVICE_SUBREDDITS + ONLYFANS_SUBREDDITS + CAMMING_SUBREDDITS + FANSLY_SUBREDDITS
+
+DEFAULT_KEYWORDS = [
+    "leak",           # Broader - catches "leaked", "leaking", etc.
+    "stolen",         # Catches "content stolen", "videos stolen"
+    "dmca",           # Catches all DMCA discussions
+    "help",           # Very broad - catches help requests
+    "advice",         # Catches advice requests
+    "piracy"          # Catches piracy discussions
+]
+
+# Subreddits where promotional replies are NOT allowed (check rules before engaging)
+NO_PROMO_SUBREDDITS = ["CamGirlProblems", "SexWorkers", "OnlyFansAdvice", "AdultContentCreators", "CreatorsAdvice"]
 
 
 def scrape_posts(subreddits: List[str], keywords: List[str], post_limit: int, max_age_days: int, debug: bool) -> List[RedditPost]:
@@ -100,6 +148,15 @@ def main():
         print(f"Title: {post.title}")
         print(f"URL: {post.url}")
         print(f"Ovarra Reply: {post.ovarra_reply}")
+    
+    # Update analytics
+    print("\n📊 Updating subreddit analytics...")
+    try:
+        from subreddit_analytics import analyze_pipeline_results
+        analyze_pipeline_results()
+    except Exception as e:
+        if debug:
+            print(f"⚠️  Could not update analytics: {e}")
 
 if __name__ == "__main__":
     main() 

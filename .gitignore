@@ -43,6 +43,7 @@ Reddit Ovarra/scraped_posts.json
 Reddit Ovarra/relevant_posts.json
 Reddit Ovarra/posts_with_comments.json
 Reddit Ovarra/final_posts.json
+Reddit Ovarra/subreddit_stats.json
 
 # macOS
 .DS_Store

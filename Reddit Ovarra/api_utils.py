@@ -131,7 +131,24 @@ def classify_posts_relevance(posts: List[RedditPost], batch_size: int = 3, debug
         try:
             if debug:
                 print(f"Sending batch {i//batch_size+1}: {user_prompt[:200]}...")
-            response = model.generate_content(user_prompt)
+            
+            # Retry logic for rate limits
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = model.generate_content(user_prompt)
+                    content = response.text.strip()
+                    break  # Success, exit retry loop
+                except Exception as e:
+                    if '429' in str(e) and attempt < max_retries - 1:
+                        # Rate limit hit, wait and retry
+                        wait_time = 60  # Wait 1 minute
+                        if debug:
+                            print(f"   ⏳ Rate limit hit. Waiting {wait_time} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        raise  # Re-raise if not rate limit or last attempt
+            
             content = response.text.strip()
             # Remove markdown code blocks if present
             if content.startswith('```'):
@@ -154,7 +171,7 @@ def classify_posts_relevance(posts: List[RedditPost], batch_size: int = 3, debug
             if debug:
                 print(f"Gemini error: {e}")
             continue
-        time.sleep(1.5)
+        time.sleep(5)  # Increased from 1.5s to 5s to stay under 15 RPM
     return relevant_posts
 
 def generate_ovarra_replies(posts: List[RedditPost], debug: bool = False) -> List[RedditPost]:
