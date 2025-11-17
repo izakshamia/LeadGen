@@ -37,3 +37,12 @@ ENV/
 
 # Logs
 *.log
+
+# Reddit Ovarra checkpoint files (contain scraped data)
+Reddit Ovarra/scraped_posts.json
+Reddit Ovarra/relevant_posts.json
+Reddit Ovarra/posts_with_comments.json
+Reddit Ovarra/final_posts.json
+
+# macOS
+.DS_Store

@@ -2,7 +2,7 @@ import os
 import json
 import time
 import requests
-import openai
+import google.generativeai as genai
 from typing import List, Dict, Any, Set
 from dataclasses import asdict
 from dotenv import load_dotenv
@@ -11,7 +11,7 @@ from models import RedditPost, RedditComment
 
 # Load environment variables
 load_dotenv()
-openai.api_key = os.getenv('OPENAI_API_KEY')
+genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 
 # Reddit API constants
 BASE_URL = "https://www.reddit.com"
@@ -20,13 +20,26 @@ HEADERS = {
 }
 
 # --- Reddit API Helpers ---
-def fetch_reddit_posts(subreddit: str, keyword: str, limit: int = 100) -> List[Dict]:
+def fetch_reddit_posts(subreddit: str, keyword: str, limit: int = 100, max_age_days: int = None) -> List[Dict]:
     url = f"{BASE_URL}/r/{subreddit}/search.json"
     params = {'q': keyword, 'sort': 'new', 'limit': limit, 'restrict_sr': 1}
     try:
         resp = requests.get(url, headers=HEADERS, params=params, timeout=10)
         if resp.status_code == 200:
-            return resp.json().get('data', {}).get('children', [])
+            posts = resp.json().get('data', {}).get('children', [])
+            
+            # Filter by age if max_age_days is specified
+            if max_age_days:
+                import time
+                cutoff_time = time.time() - (max_age_days * 24 * 60 * 60)
+                filtered_posts = []
+                for post in posts:
+                    created_utc = post.get('data', {}).get('created_utc', 0)
+                    if created_utc >= cutoff_time:
+                        filtered_posts.append(post)
+                return filtered_posts
+            
+            return posts
     except Exception as e:
         print(f"Error fetching posts: {e}")
     return []
@@ -94,9 +107,11 @@ def fetch_and_attach_comments(posts: List[RedditPost], max_retries: int = 3) -> 
         time.sleep(2)
     return posts
 
-# --- OpenAI Helpers ---
+# --- Gemini Helpers ---
 def classify_posts_relevance(posts: List[RedditPost], batch_size: int = 3, debug: bool = False) -> List[RedditPost]:
     relevant_posts = []
+    model = genai.GenerativeModel('gemini-2.0-flash')
+    
     for i in range(0, len(posts), batch_size):
         batch = posts[i:i+batch_size]
         system_prompt = (
@@ -109,21 +124,22 @@ def classify_posts_relevance(posts: List[RedditPost], batch_size: int = 3, debug
             "- DMCA takedown help for adult/NSFW content "
             "- Privacy violations related to adult content "
             "Do NOT mark general DMCA discussions, gaming copyright, music copyright, or other non-adult content issues as relevant. "
-            "Return only relevant posts as JSON."
+            "Return only relevant posts as JSON array."
         )
         posts_data = [asdict(p) for p in batch]
-        user_prompt = f"Analyze these posts. ONLY mark as relevant if they are from OnlyFans/NSFW creators asking for help with content leaks, unauthorized sharing, or DMCA takedowns for adult content. Ignore general copyright discussions. Posts: {json.dumps(posts_data, ensure_ascii=False)}"
+        user_prompt = f"{system_prompt}\n\nAnalyze these posts. ONLY mark as relevant if they are from OnlyFans/NSFW creators asking for help with content leaks, unauthorized sharing, or DMCA takedowns for adult content. Ignore general copyright discussions. Posts: {json.dumps(posts_data, ensure_ascii=False)}"
         try:
             if debug:
                 print(f"Sending batch {i//batch_size+1}: {user_prompt[:200]}...")
-            response = openai.ChatCompletion.create(
-                model="gpt-4.1-mini",
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                temperature=0.3,
-                max_tokens=2000
-            )
-            content = response['choices'][0]['message']['content']
-            parsed = json.loads(content) if isinstance(content, str) else content
+            response = model.generate_content(user_prompt)
+            content = response.text.strip()
+            # Remove markdown code blocks if present
+            if content.startswith('```'):
+                content = content.split('```')[1]
+                if content.startswith('json'):
+                    content = content[4:]
+                content = content.strip()
+            parsed = json.loads(content)
             for item in parsed:
                 if item.get('relevance'):
                     relevant_posts.append(RedditPost(
@@ -136,12 +152,14 @@ def classify_posts_relevance(posts: List[RedditPost], batch_size: int = 3, debug
                     ))
         except Exception as e:
             if debug:
-                print(f"OpenAI error: {e}")
+                print(f"Gemini error: {e}")
             continue
         time.sleep(1.5)
     return relevant_posts
 
 def generate_ovarra_replies(posts: List[RedditPost], debug: bool = False) -> List[RedditPost]:
+    model = genai.GenerativeModel('gemini-2.0-flash')
+    
     for post in posts:
         thread_text = f"Post title: {post.title}\nPost body: {post.subtitle}\n\nComments:\n"
         def flatten_comments(comments, depth=0):
@@ -155,34 +173,46 @@ def generate_ovarra_replies(posts: List[RedditPost], debug: bool = False) -> Lis
         for c in flat_comments:
             indent = '  ' * c['depth']
             thread_text += f"{indent}- {c['author']}: {c['body']}\n"
-        system_prompt = (
-            "You are founder of Ovarra, a DMCA takedown service that helps creators (especially from platforms like OnlyFans) protect their content and privacy. "
-            "Given a Reddit post and its comments, write a brief, empathetic reply that: "
-            "•	Feels authentic on Reddit (not corporate) and the vibe of the conversation"
-            "•	Acknowledges the creator’s concern or frustration , try to offer knowledge  if you can"
-            "•	Gently offers help via Ovarra — without hard-selling "
-            "•	Is under 60 words"
-            "Given the Reddit post and comments, generate an empathetic, founder-signed reply."
+        prompt = (
+            "You are a DMCA/content protection specialist who has handled hundreds of takedowns for adult content creators. "
+            "Write a tactical, expert-level Reddit reply that:\n\n"
+            "MUST INCLUDE:\n"
+            "• Specific, actionable tactics (search operators, technical steps, insider knowledge)\n"
+            "• Authority signals (mention experience with leak patterns, statistics, what actually works)\n"
+            "• Quick wins (immediate steps they can take today)\n"
+            "• Unique insights only a practitioner would know\n\n"
+            "AVOID:\n"
+            "• Generic empathy ('I'm sorry', 'don't give up', 'leaks are scary')\n"
+            "• Basic advice everyone knows (watermarking, reverse image search)\n"
+            "• Mentioning any services, companies, or products\n"
+            "• Therapy-style validation - focus on tactical information\n\n"
+            "TONE:\n"
+            "• Confident expert who knows what works\n"
+            "• Direct and practical, not emotional\n"
+            "• Show specialized knowledge through specifics\n"
+            "• 60-80 words max\n\n"
+            "EXAMPLES OF GOOD TACTICS:\n"
+            "• 'Most OF leaks come from 6 sites - remove from those and 70% of traffic disappears'\n"
+            "• 'Use search operators: \"yourusername\" + \"mega.nz\" to find leaks in 10 seconds'\n"
+            "• 'If leaks appear within 24h, it's usually Discord scraper bots, not subscribers'\n"
+            "• 'Target mirrors, not just main sites - leak networks run 5-20 copies'\n"
+            "• 'Remove top 10 search results and 80% of casual viewers never see the rest'\n\n"
+            f"Reddit thread:\n{thread_text}\n\n"
+            "Write an expert, tactical reply that demonstrates real specialized knowledge:"
         )
-        user_prompt = f"Reddit thread:\n{thread_text}\nWrite a reply as the founder of Ovarra."
         try:
             if debug:
                 print(f"Generating reply for: {post.title}")
-            response = openai.ChatCompletion.create(
-                model="gpt-4.1-mini",
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                max_tokens=300,
-                temperature=0.7
-            )
-            reply = response['choices'][0]['message']['content'].strip()
+            response = model.generate_content(prompt)
+            reply = response.text.strip()
             post.ovarra_reply = reply
             if debug:
                 print(f"Reply: {reply}")
         except Exception as e:
             post.ovarra_reply = ""
             if debug:
-                print(f"OpenAI error for reply: {e}")
-        time.sleep(3)
+                print(f"Gemini error for reply: {e}")
+        time.sleep(2)
     return posts
 
 # --- Serialization ---
@@ -236,4 +266,4 @@ def analyze_comments(comments):
         'total_comments': len(comments),
         'average_sentiment': avg_sentiment,
         'top_subreddits': dict(sorted(subreddit_counts.items(), key=lambda x: x[1], reverse=True))
-    } 
+    }

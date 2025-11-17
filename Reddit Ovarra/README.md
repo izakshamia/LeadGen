@@ -26,7 +26,21 @@ This directory contains a minimal, robust pipeline for collecting, classifying, 
 
 ```bash
 cd Reddit\ Ovarra
-python pipeline.py [--subreddits SUB1 SUB2 ...] [--discover] [--seed-subreddit SEED] [--keywords KW1 KW2 ...] [--post-limit N] [--debug] [--force]
+
+# Default: Last 4 months of posts
+python pipeline.py --debug
+
+# Custom time range: Last 7 days (fresh posts only)
+python pipeline.py --max-age-days 7 --debug
+
+# Last 30 days
+python pipeline.py --max-age-days 30 --debug
+
+# Last 6 months
+python pipeline.py --max-age-days 180 --debug
+
+# Full command with all options
+python pipeline.py [--subreddits SUB1 SUB2 ...] [--discover] [--seed-subreddit SEED] [--keywords KW1 KW2 ...] [--post-limit N] [--max-age-days N] [--debug] [--force]
 ```
 
 - `--subreddits`: List of subreddits to search (default: common subreddits)
@@ -34,6 +48,7 @@ python pipeline.py [--subreddits SUB1 SUB2 ...] [--discover] [--seed-subreddit S
 - `--seed-subreddit`: Subreddit to start discovery from (default: CamGirlProblems)
 - `--keywords`: Keywords to search for (default: dmca leak takedown copyright)
 - `--post-limit`: Number of posts per keyword (default: 10)
+- `--max-age-days`: Only fetch posts from last N days (default: 120 = 4 months)
 - `--debug`: Print debug information
 - `--force`: Ignore checkpoints and re-run all steps
 
@@ -45,10 +60,31 @@ python pipeline.py [--subreddits SUB1 SUB2 ...] [--discover] [--seed-subreddit S
 
 ## File Structure
 - `pipeline.py`: Main entry point for the pipeline
-- `api_utils.py`: All Reddit/OpenAI API and utility logic
+- `api_utils.py`: All Reddit/Gemini API and utility logic
 - `models.py`: Data models for posts and comments
 - `requirements.txt`: Python dependencies
+- `scripts/`: Utility scripts for working with results
+  - `list_posts.py`: View posts from checkpoint files
+  - `regenerate_replies.py`: Regenerate all replies
+  - `regenerate_single.py`: Regenerate one specific reply
 - `README.md`: This file
 
 ## Output
 - Final results with Ovarra replies are printed and saved to `final_posts.json`
+
+## Utility Scripts
+
+After running the pipeline, use these helper scripts:
+
+```bash
+# List all posts with details
+python3 scripts/list_posts.py --show-replies
+
+# Regenerate all replies (useful for testing new prompts)
+python3 scripts/regenerate_replies.py --debug
+
+# Regenerate one specific reply
+python3 scripts/regenerate_single.py --index 3 --debug
+```
+
+See `scripts/README.md` for more details.
