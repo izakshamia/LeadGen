@@ -1,8 +1,11 @@
 [phases.setup]
-nixPkgs = ["python310"]
+nixPkgs = ["python310", "pip"]
 
 [phases.install]
-cmds = ["cd 'Reddit Ovarra' && pip install -r requirements.txt"]
+cmds = [
+  "pip install --upgrade pip",
+  "cd 'Reddit Ovarra' && pip install -r requirements.txt"
+]
 
 [start]
-cmd = "cd 'Reddit Ovarra' && uvicorn main:app --host 0.0.0.0 --port $PORT"
+cmd = "cd 'Reddit Ovarra' && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
