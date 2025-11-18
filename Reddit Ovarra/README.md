@@ -1,6 +1,8 @@
-# Reddit Ovarra Pipeline (Minimal, Checkpointed)
+# Reddit Ovarra Pipeline & API
 
 This directory contains a minimal, robust pipeline for collecting, classifying, and responding to Reddit posts related to DMCA takedowns, OnlyFans leaks, and unauthorized adult content distribution. The workflow is designed to help identify and support users affected by these issues, including generating empathetic founder-signed replies.
+
+The system can be used as both a **CLI tool** for local development and as a **REST API service** for production deployment.
 
 ## Pipeline Overview
 
@@ -113,9 +115,178 @@ python3 scripts/view_analytics.py
 
 See `docs/ANALYTICS_EXAMPLE.md` for detailed examples.
 
+## API Service
+
+The Reddit Ovarra pipeline is also available as a REST API service for production use.
+
+### API Endpoints
+
+#### POST /scrape
+Trigger a scraping operation and save results to Supabase.
+
+**Request Body:**
+```json
+{
+  "subreddits": ["CamGirlProblems", "OnlyFansAdvice"],
+  "keywords": ["leak", "stolen", "dmca"],
+  "post_limit": 10,
+  "max_age_days": 120
+}
+```
+
+All fields are optional and will use defaults if not provided.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "processed": 15,
+  "skipped": 3,
+  "failed": 0,
+  "message": "Scraping completed successfully"
+}
+```
+
+**Status Codes:**
+- `200 OK` - Scraping completed successfully
+- `400 Bad Request` - Invalid request parameters
+- `500 Internal Server Error` - Server error during scraping
+
+#### GET /suggestions
+Retrieve recent Reddit post suggestions from the database.
+
+**Query Parameters:**
+- `hours` (optional, default: 24) - Time window in hours for filtering suggestions
+
+**Example:**
+```bash
+GET /suggestions?hours=48
+```
+
+**Response:**
+```json
+{
+  "suggestions": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "reddit_name": "Help! My content was leaked",
+      "reddit_url": "https://reddit.com/r/CamGirlProblems/comments/abc123",
+      "suggested_response": "Hi there! I'm Aaron, founder of Ovarra...",
+      "status": "new",
+      "created_at": "2025-11-18T10:30:00Z"
+    }
+  ],
+  "count": 1,
+  "time_window_hours": 48
+}
+```
+
+**Status Codes:**
+- `200 OK` - Suggestions retrieved successfully (empty list if none found)
+- `500 Internal Server Error` - Database error
+
+#### GET /health
+Check service and database health status.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "database": "connected",
+  "timestamp": "2025-11-18T10:30:00Z"
+}
+```
+
+**Status Codes:**
+- `200 OK` - Service is healthy
+- `503 Service Unavailable` - Database connection failed
+
+### Local Development Setup
+
+1. **Install dependencies:**
+```bash
+cd "Reddit Ovarra"
+pip install -r requirements.txt
+```
+
+2. **Set up environment variables:**
+```bash
+cp ../.env.example ../.env
+# Edit .env and add your API keys
+```
+
+Required environment variables:
+- `GEMINI_API_KEY` - Get from https://aistudio.google.com/app/apikey
+- `SUPABASE_URL` - Get from Supabase Project Settings > API
+- `SUPABASE_KEY` - Get from Supabase Project Settings > API (anon/public key)
+
+3. **Set up Supabase database:**
+```bash
+# Run the schema SQL in your Supabase SQL editor
+cat supabase_schema.sql
+```
+
+See `SUPABASE_SETUP.md` for detailed instructions.
+
+4. **Run the API server locally:**
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+5. **Test the API:**
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Trigger a scrape
+curl -X POST http://localhost:8000/scrape \
+  -H "Content-Type: application/json" \
+  -d '{"post_limit": 5, "max_age_days": 30}'
+
+# Get recent suggestions
+curl http://localhost:8000/suggestions?hours=24
+```
+
+6. **View API documentation:**
+Open http://localhost:8000/docs in your browser for interactive API documentation.
+
+### Railway Deployment
+
+1. **Create a new Railway project:**
+   - Go to https://railway.app
+   - Create a new project
+   - Connect your GitHub repository
+
+2. **Add environment variables in Railway:**
+   - `GEMINI_API_KEY`
+   - `SUPABASE_URL`
+   - `SUPABASE_KEY`
+
+3. **Deploy:**
+   - Railway will automatically detect the `Procfile` and deploy
+   - The service will be available at your Railway-provided URL
+
+4. **Verify deployment:**
+```bash
+# Replace YOUR_RAILWAY_URL with your actual Railway URL
+curl https://YOUR_RAILWAY_URL/health
+```
+
+### Environment Variables
+
+All required environment variables:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `GEMINI_API_KEY` | Google Gemini API key for AI responses | Yes |
+| `SUPABASE_URL` | Supabase project URL | Yes |
+| `SUPABASE_KEY` | Supabase anon/public key | Yes |
+| `PORT` | Port for the API server (auto-set by Railway) | No (default: 8000) |
+
 ## Documentation
 
 - **[README.md](README.md)** - Main documentation (this file)
+- **[SUPABASE_SETUP.md](SUPABASE_SETUP.md)** - Supabase database setup guide
 - **[docs/FEATURES.md](docs/FEATURES.md)** - Complete feature list and roadmap
 - **[docs/SCRIPTS.md](docs/SCRIPTS.md)** - Utility scripts guide
 - **[docs/ANALYTICS_EXAMPLE.md](docs/ANALYTICS_EXAMPLE.md)** - Analytics examples and usage
