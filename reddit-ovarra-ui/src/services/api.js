@@ -15,7 +15,7 @@ export async function health() {
   try {
     // Create abort controller for timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
     
     const response = await fetch(`${API_BASE_URL}/health`, {
       signal: controller.signal
@@ -91,7 +91,7 @@ export async function scrape(params) {
   try {
     // Create abort controller for timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout for scraping
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout for scraping
     
     const response = await fetch(`${API_BASE_URL}/scrape`, {
       method: 'POST',
