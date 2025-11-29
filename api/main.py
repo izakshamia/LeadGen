@@ -4,12 +4,17 @@ Provides endpoints for scraping Reddit posts and retrieving suggestions from Sup
 """
 
 import logging
+import sys
+import os
 from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+
+# Add project root to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Load environment variables
 load_dotenv()
@@ -31,8 +36,8 @@ app = FastAPI(
 # Add CORS middleware for cross-origin requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -84,6 +89,8 @@ class ScrapeResponse(BaseModel):
     processed: int = Field(description="Number of successfully saved suggestions")
     skipped: int = Field(description="Number of duplicate posts skipped")
     failed: int = Field(description="Number of posts that failed to save")
+    redditors_extracted: int = Field(default=0, description="Number of unique redditors extracted")
+    redditors_saved: int = Field(default=0, description="Number of redditors saved to database")
     message: str = Field(description="Human-readable status message")
 
 
@@ -99,6 +106,32 @@ class HealthResponse(BaseModel):
     status: str = Field(description="Service status (healthy, unhealthy)")
     database: str = Field(description="Database connection status (connected, disconnected)")
     timestamp: datetime = Field(description="Current server timestamp")
+
+
+class RedditorResponse(BaseModel):
+    """Response model for individual target redditor"""
+    id: str = Field(description="Unique identifier (UUID)")
+    username: str = Field(description="Reddit username")
+    account_age_days: Optional[int] = Field(None, description="Account age in days")
+    total_karma: Optional[int] = Field(None, description="Total karma")
+    comment_karma: Optional[int] = Field(None, description="Comment karma")
+    post_karma: Optional[int] = Field(None, description="Post karma")
+    authenticity_score: int = Field(description="Authenticity score (0-100)")
+    need_score: int = Field(description="Need score (0-100)")
+    priority: str = Field(description="Priority level (high, medium, low)")
+    is_authentic: bool = Field(description="Whether account is authentic")
+    is_active: bool = Field(description="Whether account is active")
+    source_posts: List[str] = Field(description="URLs where redditor was found")
+    first_seen: datetime = Field(description="First time redditor was discovered")
+    last_updated: datetime = Field(description="Last time redditor data was updated")
+
+
+class RedditorsListResponse(BaseModel):
+    """Response model for GET /redditors endpoint"""
+    redditors: List[RedditorResponse] = Field(description="List of target redditors")
+    count: int = Field(description="Number of redditors returned")
+    limit: int = Field(description="Limit used for pagination")
+    offset: int = Field(description="Offset used for pagination")
 
 
 
@@ -127,7 +160,7 @@ async def scrape_reddit(request: ScrapeRequest):
     Raises:
         HTTPException: 500 if scraping fails
     """
-    from api.services.scraper_service import scrape_and_save
+    from services.scraper_service import scrape_and_save
     from cli.pipeline import DEFAULT_SUBREDDITS, DEFAULT_KEYWORDS
     
     # Use defaults from pipeline.py if not provided
@@ -149,13 +182,22 @@ async def scrape_reddit(request: ScrapeRequest):
         )
         
         # Generate human-readable message
+        redditors_extracted = result.get("redditors_extracted", 0)
+        redditors_saved = result.get("redditors_saved", 0)
+        
         if result["status"] == "success":
             if result["processed"] > 0:
                 message = f"Scraping completed successfully - {result['processed']} new suggestions saved"
+                if redditors_saved > 0:
+                    message += f", {redditors_saved} redditors extracted"
             else:
                 message = f"Scraping completed - all {result['skipped']} posts were already in database"
+                if redditors_saved > 0:
+                    message += f", {redditors_saved} redditors extracted"
         elif result["status"] == "partial":
             message = f"Scraping completed with {result['failed']} failures"
+            if redditors_saved > 0:
+                message += f", {redditors_saved} redditors extracted"
         else:
             message = "Scraping failed - no posts were processed"
         
@@ -164,6 +206,8 @@ async def scrape_reddit(request: ScrapeRequest):
             processed=result["processed"],
             skipped=result["skipped"],
             failed=result["failed"],
+            redditors_extracted=redditors_extracted,
+            redditors_saved=redditors_saved,
             message=message
         )
         
@@ -196,7 +240,7 @@ async def get_suggestions(hours: int = 24):
     Raises:
         HTTPException: 500 if database query fails
     """
-    from api.services.supabase_client import get_recent_suggestions
+    from services.supabase_client import get_recent_suggestions
     
     logger.info(f"GET /suggestions - hours={hours}")
     
@@ -235,6 +279,71 @@ async def get_suggestions(hours: int = 24):
 
 
 
+@app.get("/redditors", response_model=RedditorsListResponse, status_code=status.HTTP_200_OK)
+async def get_redditors(limit: int = 50, offset: int = 0):
+    """
+    Retrieve target Redditors from the database.
+    
+    Returns Redditors sorted by need_score (highest first) to prioritize
+    the most promising leads for outreach campaigns.
+    
+    Args:
+        limit: Maximum number of redditors to return (default: 50)
+        offset: Number of records to skip for pagination (default: 0)
+        
+    Returns:
+        RedditorsListResponse with filtered redditors
+        
+    Raises:
+        HTTPException: 500 if database query fails
+    """
+    from services.supabase_client import get_target_redditors
+    
+    logger.info(f"GET /redditors - limit={limit}, offset={offset}")
+    
+    try:
+        # Retrieve redditors from database
+        redditors_data = get_target_redditors(limit=limit, offset=offset)
+        
+        # Convert to response models
+        redditors = [
+            RedditorResponse(
+                id=r["id"],
+                username=r["username"],
+                account_age_days=r.get("account_age_days"),
+                total_karma=r.get("total_karma"),
+                comment_karma=r.get("comment_karma"),
+                post_karma=r.get("post_karma"),
+                authenticity_score=r["authenticity_score"],
+                need_score=r["need_score"],
+                priority=r["priority"],
+                is_authentic=r["is_authentic"],
+                is_active=r["is_active"],
+                source_posts=r["source_posts"],
+                first_seen=r["first_seen"],
+                last_updated=r["last_updated"]
+            )
+            for r in redditors_data
+        ]
+        
+        response = RedditorsListResponse(
+            redditors=redditors,
+            count=len(redditors),
+            limit=limit,
+            offset=offset
+        )
+        
+        logger.info(f"GET /redditors completed - returned {len(redditors)} redditors")
+        return response
+        
+    except Exception as e:
+        logger.error(f"GET /redditors failed with error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve redditors: {str(e)}"
+        )
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """
@@ -250,7 +359,7 @@ async def health_check():
         200: Service is healthy and database is connected
         503: Service is running but database is unavailable
     """
-    from api.services.supabase_client import test_connection
+    from services.supabase_client import test_connection
     
     logger.info("GET /health - checking service status")
     

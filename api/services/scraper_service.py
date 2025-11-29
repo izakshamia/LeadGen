@@ -5,14 +5,14 @@ Bridges existing scraper logic with Supabase database operations.
 
 import logging
 from typing import List, Dict, Any
-from api.models.reddit_post import RedditPost
-from api.utils.api_utils import (
+from models.reddit_post import RedditPost
+from utils.api_utils import (
     fetch_reddit_posts,
     classify_posts_relevance,
     fetch_and_attach_comments,
     generate_ovarra_replies
 )
-from api.services.supabase_client import check_duplicate, insert_suggestion
+from services.supabase_client import check_duplicate, insert_suggestion
 
 # Configure logging
 logging.basicConfig(
@@ -20,6 +20,18 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Import redditor extraction functions
+try:
+    from src.services.redditor_extractor import (
+        extract_redditors_from_posts,
+        consolidate_duplicates,
+        save_redditors_to_db
+    )
+    REDDITOR_EXTRACTION_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Redditor extraction not available: {e}")
+    REDDITOR_EXTRACTION_AVAILABLE = False
 
 
 def scrape_and_save(
@@ -50,12 +62,16 @@ def scrape_and_save(
             - processed: Number of successfully saved suggestions
             - skipped: Number of duplicate posts skipped
             - failed: Number of posts that failed to save
+            - redditors_extracted: Number of unique redditors extracted
+            - redditors_saved: Number of redditors saved to database
             - status: Overall status ('success', 'partial', or 'failure')
     """
     # Initialize counters
     processed = 0
     skipped = 0
     failed = 0
+    redditors_extracted = 0
+    redditors_saved = 0
     
     logger.info(f"Starting scrape_and_save: subreddits={subreddits}, keywords={keywords}, "
                 f"post_limit={post_limit}, max_age_days={max_age_days}")
@@ -88,6 +104,9 @@ def scrape_and_save(
     # Step 3-6: Process each relevant post
     logger.info("Step 3-6: Processing relevant posts (duplicate check, comments, replies, save)...")
     
+    # Track posts with comments for redditor extraction
+    posts_with_comments = []
+    
     for idx, post in enumerate(relevant_posts, 1):
         logger.info(f"Processing post {idx}/{len(relevant_posts)}: {post.title[:50]}...")
         
@@ -99,8 +118,12 @@ def scrape_and_save(
         
         # Step 4: Fetch comments for this post
         logger.info(f"Fetching comments for: {post.url}")
-        posts_with_comments = fetch_and_attach_comments([post])
-        post = posts_with_comments[0]
+        fetched_posts = fetch_and_attach_comments([post])
+        post = fetched_posts[0]
+        
+        # Track for redditor extraction
+        if post.comments:
+            posts_with_comments.append(post)
         
         # Step 5: Generate Ovarra reply
         logger.info(f"Generating Ovarra reply for: {post.url}")
@@ -126,6 +149,32 @@ def scrape_and_save(
             failed += 1
             logger.warning(f"No reply generated for post: {post.url}")
     
+    # Step 7: Extract redditors from posts with comments
+    if REDDITOR_EXTRACTION_AVAILABLE and posts_with_comments:
+        logger.info("Step 7: Extracting redditors from posts...")
+        try:
+            # Extract redditors from all posts that have comments
+            candidates = extract_redditors_from_posts(posts_with_comments)
+            
+            # Consolidate duplicates
+            consolidated_redditors = consolidate_duplicates(candidates)
+            redditors_extracted = len(consolidated_redditors)
+            
+            # Save to database
+            if consolidated_redditors:
+                redditors_saved = save_redditors_to_db(consolidated_redditors)
+                logger.info(f"Extracted {redditors_extracted} unique redditors, saved {redditors_saved}")
+            else:
+                logger.info("No redditors extracted from posts")
+        except Exception as e:
+            logger.error(f"Error during redditor extraction: {e}")
+            # Don't fail the whole operation if redditor extraction fails
+    else:
+        if not REDDITOR_EXTRACTION_AVAILABLE:
+            logger.warning("Redditor extraction skipped - module not available")
+        else:
+            logger.info("No posts with comments available for redditor extraction")
+    
     # Determine overall status
     if processed > 0 and failed == 0:
         status = "success"
@@ -140,6 +189,8 @@ def scrape_and_save(
         "processed": processed,
         "skipped": skipped,
         "failed": failed,
+        "redditors_extracted": redditors_extracted,
+        "redditors_saved": redditors_saved,
         "status": status
     }
     
