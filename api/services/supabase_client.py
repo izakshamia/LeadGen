@@ -208,6 +208,99 @@ def get_recent_suggestions(hours: int = 24) -> List[Dict[str, Any]]:
         return []
 
 
+def get_target_redditors(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    """
+    Retrieve target Redditors from the database.
+    
+    Fetches Redditors from target_redditors table, sorted by need_score
+    to prioritize the most promising leads. Supports pagination.
+    
+    Args:
+        limit: Maximum number of redditors to return (default: 50)
+        offset: Number of records to skip for pagination (default: 0)
+        
+    Returns:
+        list: List of redditor dictionaries, empty list on error
+    """
+    try:
+        client = init_supabase_client()
+        
+        logger.info(f"Fetching target redditors (limit={limit}, offset={offset})")
+        
+        # Query with ordering and pagination
+        response = client.table('target_redditors') \
+            .select('*') \
+            .order('need_score', desc=True) \
+            .range(offset, offset + limit - 1) \
+            .execute()
+        
+        redditors = response.data if response.data else []
+        logger.info(f"Retrieved {len(redditors)} target redditors")
+        
+        return redditors
+        
+    except Exception as e:
+        logger.error(f"Error retrieving target redditors: {e}")
+        return []
+
+
+def update_redditor_status(
+    redditor_id: str,
+    contacted_status: str,
+    notes: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Update the contact status of a target redditor.
+    
+    Updates the contacted_status field and optionally the notes field.
+    When status is changed to 'approved' or 'contacted', also sets contacted_at timestamp.
+    
+    Args:
+        redditor_id: UUID of the redditor to update
+        contacted_status: New status (pending, approved, contacted, responded, rejected)
+        notes: Optional notes about the redditor
+        
+    Returns:
+        dict: The updated redditor data if successful, None if not found
+    """
+    try:
+        client = init_supabase_client()
+        
+        # Prepare update data
+        update_data = {
+            'contacted_status': contacted_status,
+            'last_updated': datetime.utcnow().isoformat()
+        }
+        
+        # Set contacted_at timestamp when status changes to approved or contacted
+        if contacted_status in ['approved', 'contacted']:
+            update_data['contacted_at'] = datetime.utcnow().isoformat()
+        
+        # Add notes if provided
+        if notes is not None:
+            update_data['notes'] = notes
+        
+        logger.info(f"Updating redditor {redditor_id} status to {contacted_status}")
+        
+        # Update the record
+        response = client.table('target_redditors') \
+            .update(update_data) \
+            .eq('id', redditor_id) \
+            .execute()
+        
+        if response.data and len(response.data) > 0:
+            updated_redditor = response.data[0]
+            logger.info(f"Successfully updated redditor {redditor_id}")
+            return updated_redditor
+        else:
+            logger.warning(f"No redditor found with id {redditor_id}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error updating redditor status for {redditor_id}: {e}")
+        raise
+
+
 def test_connection() -> bool:
     """
     Test database connectivity for health checks.

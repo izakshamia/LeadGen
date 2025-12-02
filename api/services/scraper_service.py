@@ -33,6 +33,14 @@ except ImportError as e:
     logger.warning(f"Redditor extraction not available: {e}")
     REDDITOR_EXTRACTION_AVAILABLE = False
 
+# Import profile fetcher
+try:
+    from services.redditor_profile_fetcher import fetch_and_update_redditor_profiles
+    PROFILE_FETCHER_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Profile fetcher not available: {e}")
+    PROFILE_FETCHER_AVAILABLE = False
+
 
 def scrape_and_save(
     subreddits: List[str],
@@ -164,6 +172,23 @@ def scrape_and_save(
             if consolidated_redditors:
                 redditors_saved = save_redditors_to_db(consolidated_redditors)
                 logger.info(f"Extracted {redditors_extracted} unique redditors, saved {redditors_saved}")
+                
+                # Step 8: Fetch real profile data for new redditors
+                if PROFILE_FETCHER_AVAILABLE and redditors_saved > 0:
+                    logger.info("Step 8: Fetching Reddit profiles for new redditors...")
+                    try:
+                        # Get usernames of newly saved redditors
+                        new_usernames = [r['username'] for r in consolidated_redditors]
+                        
+                        # Fetch profiles (with rate limiting)
+                        profile_results = fetch_and_update_redditor_profiles(new_usernames, delay=2.0)
+                        logger.info(f"Profile fetch results: {profile_results}")
+                    except Exception as e:
+                        logger.error(f"Error fetching profiles: {e}")
+                        # Don't fail if profile fetching fails
+                else:
+                    if not PROFILE_FETCHER_AVAILABLE:
+                        logger.warning("Profile fetching skipped - module not available")
             else:
                 logger.info("No redditors extracted from posts")
         except Exception as e:

@@ -118,6 +118,15 @@ class RedditorResponse(BaseModel):
     first_seen: datetime = Field(description="First time redditor was discovered")
     last_updated: datetime = Field(description="Last time redditor data was updated")
     social_links: Optional[Dict] = Field(None, description="Social media links (platform: url)")
+    contacted_status: Optional[str] = Field("pending", description="Contact status (pending, approved, contacted, responded, rejected)")
+    contacted_at: Optional[datetime] = Field(None, description="When redditor was contacted/approved")
+    notes: Optional[str] = Field(None, description="Notes about this redditor")
+
+
+class UpdateRedditorStatusRequest(BaseModel):
+    """Request model for updating redditor contact status"""
+    contacted_status: str = Field(description="New status (pending, approved, contacted, responded, rejected)")
+    notes: Optional[str] = Field(None, description="Optional notes")
 
 
 class RedditorsListResponse(BaseModel):
@@ -268,7 +277,10 @@ async def get_redditors(limit: int = 50, offset: int = 0):
                 source_posts=r["source_posts"],
                 first_seen=r["first_seen"],
                 last_updated=r["last_updated"],
-                social_links=r.get("social_links")
+                social_links=r.get("social_links"),
+                contacted_status=r.get("contacted_status", "pending"),
+                contacted_at=r.get("contacted_at"),
+                notes=r.get("notes")
             )
             for r in redditors_data
         ]
@@ -292,12 +304,18 @@ async def get_redditors(limit: int = 50, offset: int = 0):
 
 
 @app.post("/redditors/fetch-profiles")
-async def fetch_redditor_profiles():
+async def fetch_redditor_profiles(fetch_all: bool = False, limit: int = 100):
     """
-    Fetch Reddit profile data for redditors without profile info.
+    Fetch Reddit profile data for redditors.
     
-    Finds redditors with missing profile data (account_age_days = 0 or total_karma = 0)
+    By default, finds redditors with missing profile data (account_age_days = 0 or total_karma = 0)
     and fetches their real profile data from Reddit API.
+    
+    If fetch_all=true, fetches profiles for ALL redditors to update social links.
+    
+    Args:
+        fetch_all: If true, fetch profiles for all redditors (default: false)
+        limit: Maximum number of redditors to fetch when fetch_all=true (default: 100)
     
     Returns:
         Dictionary with fetch results (total, success, failed, not_found)
@@ -306,11 +324,14 @@ async def fetch_redditor_profiles():
         HTTPException: 500 if fetch fails
     """
     try:
-        from services.redditor_profile_fetcher import fetch_profiles_for_new_redditors
-        
-        logger.info("POST /redditors/fetch-profiles - starting profile fetch")
-        
-        results = fetch_profiles_for_new_redditors()
+        if fetch_all:
+            from services.redditor_profile_fetcher import fetch_profiles_for_all_redditors
+            logger.info(f"POST /redditors/fetch-profiles - fetching ALL profiles (limit={limit})")
+            results = fetch_profiles_for_all_redditors(limit=limit)
+        else:
+            from services.redditor_profile_fetcher import fetch_profiles_for_new_redditors
+            logger.info("POST /redditors/fetch-profiles - fetching profiles for new redditors")
+            results = fetch_profiles_for_new_redditors()
         
         logger.info(f"POST /redditors/fetch-profiles completed - {results}")
         return results
@@ -320,6 +341,55 @@ async def fetch_redditor_profiles():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch profiles: {str(e)}"
+        )
+
+
+@app.patch("/redditors/{redditor_id}/status")
+async def update_redditor_status(redditor_id: str, request: UpdateRedditorStatusRequest):
+    """
+    Update the contact status of a target redditor.
+    
+    Allows manual tracking of outreach progress by updating the contacted_status field.
+    When status is changed to 'approved' or 'contacted', the contacted_at timestamp is set.
+    
+    Args:
+        redditor_id: UUID of the redditor to update
+        request: UpdateRedditorStatusRequest with new status and optional notes
+        
+    Returns:
+        Updated redditor data
+        
+    Raises:
+        HTTPException: 404 if redditor not found, 500 if update fails
+    """
+    from services.supabase_client import update_redditor_status
+    
+    logger.info(f"PATCH /redditors/{redditor_id}/status - status={request.contacted_status}")
+    
+    try:
+        # Update status in database
+        updated_redditor = update_redditor_status(
+            redditor_id=redditor_id,
+            contacted_status=request.contacted_status,
+            notes=request.notes
+        )
+        
+        if not updated_redditor:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Redditor with id {redditor_id} not found"
+            )
+        
+        logger.info(f"PATCH /redditors/{redditor_id}/status completed")
+        return updated_redditor
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PATCH /redditors/{redditor_id}/status failed with error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update redditor status: {str(e)}"
         )
 
 

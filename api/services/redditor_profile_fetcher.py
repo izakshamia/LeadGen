@@ -44,25 +44,27 @@ def fetch_social_links(username: str) -> List[Dict]:
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # New Method: Use the user-provided CSS selector to find the social links container
-        social_links_container = soup.select_one('#right-sidebar-contents > aside.mt-md.rounded-4.bg-neutral-background-weak > faceplate-tracker > div > div.mb-sm')
+        social_media_selectors = [
+            'a[href*="instagram.com"]',
+            'a[href*="twitter.com"]',
+            'a[href*="x.com"]',
+            'a[href*="onlyfans.com"]',
+            'a[href*="tiktok.com"]',
+            'a[href*="youtube.com"]',
+            'a[href*="youtu.be"]',
+            'a[href*="twitch.tv"]',
+            'a[href*="linktr.ee"]',
+            'a[href*="snapchat.com"]',
+        ]
         
-        links_to_process = []
-        if social_links_container:
-            logger.info(f"Found social links container for u/{username}")
-            links_to_process = social_links_container.find_all('a', href=True)
-        else:
-            logger.info(f"Could not find social links container for u/{username}, falling back to page-wide search.")
-            # Fallback Method: Find all links in the page
-            links_to_process = soup.find_all('a', href=True)
+        found_urls = set()
+        for selector in social_media_selectors:
+            for link in soup.select(selector):
+                href = link.get('href')
+                if href:
+                    found_urls.add(href)
 
         social_links = []
-        found_urls = set()
-
-        for link in links_to_process:
-            href = link.get('href', '')
-            if href:
-                found_urls.add(href)
         
         # Method 2: Also search in the raw HTML for URLs that might not be in <a> tags
         html_text = response.text
@@ -98,14 +100,6 @@ def fetch_social_links(username: str) -> List[Dict]:
                 r'snapchat\.com/add/([a-zA-Z0-9._]+)'
             ]
         }
-        
-        found_urls = set()
-        
-        # Search in <a> tags
-        for link in all_links:
-            href = link.get('href', '')
-            if href:
-                found_urls.add(href)
         
         # Search in raw HTML with regex
         for platform, pattern_list in patterns.items():
@@ -420,4 +414,59 @@ def fetch_profiles_for_new_redditors() -> Dict:
         
     except Exception as e:
         logger.error(f"Error in fetch_profiles_for_new_redditors: {e}")
+        return {'total': 0, 'success': 0, 'failed': 0, 'not_found': 0, 'error': str(e)}
+
+
+def fetch_profiles_for_all_redditors(limit: int = 100) -> Dict:
+    """
+    Fetch profiles for ALL redditors to update social links.
+    
+    This is useful for backfilling social links for existing redditors
+    that were added before social link extraction was implemented.
+    
+    Args:
+        limit: Maximum number of redditors to update (default: 100)
+        
+    Returns:
+        Dictionary with fetch results
+    """
+    try:
+        from services.supabase_client import init_supabase_client
+        
+        client = init_supabase_client()
+        
+        # Get all redditors (or those without social links)
+        logger.info(f"Fetching up to {limit} redditors for profile updates...")
+        response = client.table('target_redditors') \
+            .select('username, social_links') \
+            .limit(limit) \
+            .execute()
+        
+        if not response.data:
+            logger.info("No redditors found")
+            return {'total': 0, 'success': 0, 'failed': 0, 'not_found': 0}
+        
+        # Prioritize redditors without social links
+        redditors_without_links = []
+        redditors_with_links = []
+        
+        for r in response.data:
+            social_links = r.get('social_links') or {}
+            if not social_links or len(social_links) == 0:
+                redditors_without_links.append(r['username'])
+            else:
+                redditors_with_links.append(r['username'])
+        
+        # Process redditors without links first, then those with links
+        usernames = redditors_without_links + redditors_with_links
+        
+        logger.info(f"Found {len(usernames)} redditors total:")
+        logger.info(f"  - {len(redditors_without_links)} without social links")
+        logger.info(f"  - {len(redditors_with_links)} with existing social links")
+        
+        # Fetch and update profiles
+        return fetch_and_update_redditor_profiles(usernames, delay=2.0)
+        
+    except Exception as e:
+        logger.error(f"Error in fetch_profiles_for_all_redditors: {e}")
         return {'total': 0, 'success': 0, 'failed': 0, 'not_found': 0, 'error': str(e)}
