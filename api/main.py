@@ -7,8 +7,8 @@ import logging
 import sys
 import os
 from datetime import datetime
-from typing import Optional, List
-from fastapi import FastAPI, HTTPException, status
+from typing import Optional, List, Dict
+from fastapi import FastAPI, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -73,6 +73,10 @@ class ScrapeRequest(BaseModel):
     )
 
 
+class ScrapeAcceptedResponse(BaseModel):
+    """Response model for POST /scrape when accepted"""
+    message: str = Field(description="Message indicating that the scrape has been started")
+
 class SuggestionResponse(BaseModel):
     """Response model for individual suggestion"""
     id: str = Field(description="Unique identifier (UUID)")
@@ -81,17 +85,6 @@ class SuggestionResponse(BaseModel):
     suggested_response: str = Field(description="Generated Ovarra reply")
     status: str = Field(description="Suggestion status (new, approved, sent, ignored)")
     created_at: datetime = Field(description="Timestamp when suggestion was created")
-
-
-class ScrapeResponse(BaseModel):
-    """Response model for POST /scrape endpoint"""
-    status: str = Field(description="Overall status (success, partial, failure)")
-    processed: int = Field(description="Number of successfully saved suggestions")
-    skipped: int = Field(description="Number of duplicate posts skipped")
-    failed: int = Field(description="Number of posts that failed to save")
-    redditors_extracted: int = Field(default=0, description="Number of unique redditors extracted")
-    redditors_saved: int = Field(default=0, description="Number of redditors saved to database")
-    message: str = Field(description="Human-readable status message")
 
 
 class SuggestionsListResponse(BaseModel):
@@ -124,6 +117,7 @@ class RedditorResponse(BaseModel):
     source_posts: List[str] = Field(description="URLs where redditor was found")
     first_seen: datetime = Field(description="First time redditor was discovered")
     last_updated: datetime = Field(description="Last time redditor data was updated")
+    social_links: Optional[Dict] = Field(None, description="Social media links (platform: url)")
 
 
 class RedditorsListResponse(BaseModel):
@@ -134,31 +128,24 @@ class RedditorsListResponse(BaseModel):
     offset: int = Field(description="Offset used for pagination")
 
 
-
 # ============================================================================
 # API Endpoints
 # ============================================================================
 
-@app.post("/scrape", response_model=ScrapeResponse, status_code=status.HTTP_200_OK)
-async def scrape_reddit(request: ScrapeRequest):
+@app.post("/scrape", response_model=ScrapeAcceptedResponse, status_code=status.HTTP_202_ACCEPTED)
+async def scrape_reddit(request: ScrapeRequest, background_tasks: BackgroundTasks):
     """
-    Trigger Reddit scraping and save results to Supabase.
+    Trigger Reddit scraping in the background.
     
-    This endpoint executes the complete scraping pipeline:
-    1. Scrapes Reddit posts from specified subreddits
-    2. Classifies posts for relevance
-    3. Checks for duplicates (skips existing posts)
-    4. Generates Ovarra replies for new posts
-    5. Saves suggestions to Supabase database
+    This endpoint adds the scraping task to a background queue
+    and returns immediately with a 202 Accepted response.
     
     Args:
         request: ScrapeRequest with optional parameters
+        background_tasks: FastAPI background tasks dependency
         
     Returns:
-        ScrapeResponse with processing statistics
-        
-    Raises:
-        HTTPException: 500 if scraping fails
+        ScrapeAcceptedResponse confirming the task has started
     """
     from services.scraper_service import scrape_and_save
     from cli.pipeline import DEFAULT_SUBREDDITS, DEFAULT_KEYWORDS
@@ -169,58 +156,18 @@ async def scrape_reddit(request: ScrapeRequest):
     post_limit = request.post_limit if request.post_limit else 10
     max_age_days = request.max_age_days if request.max_age_days else 120
     
-    logger.info(f"POST /scrape - subreddits={subreddits}, keywords={keywords}, "
-                f"post_limit={post_limit}, max_age_days={max_age_days}")
+    logger.info(f"POST /scrape - Adding scrape task to background: subreddits={subreddits}, keywords={keywords}")
     
-    try:
-        # Execute scraping pipeline
-        result = scrape_and_save(
-            subreddits=subreddits,
-            keywords=keywords,
-            post_limit=post_limit,
-            max_age_days=max_age_days
-        )
-        
-        # Generate human-readable message
-        redditors_extracted = result.get("redditors_extracted", 0)
-        redditors_saved = result.get("redditors_saved", 0)
-        
-        if result["status"] == "success":
-            if result["processed"] > 0:
-                message = f"Scraping completed successfully - {result['processed']} new suggestions saved"
-                if redditors_saved > 0:
-                    message += f", {redditors_saved} redditors extracted"
-            else:
-                message = f"Scraping completed - all {result['skipped']} posts were already in database"
-                if redditors_saved > 0:
-                    message += f", {redditors_saved} redditors extracted"
-        elif result["status"] == "partial":
-            message = f"Scraping completed with {result['failed']} failures"
-            if redditors_saved > 0:
-                message += f", {redditors_saved} redditors extracted"
-        else:
-            message = "Scraping failed - no posts were processed"
-        
-        response = ScrapeResponse(
-            status=result["status"],
-            processed=result["processed"],
-            skipped=result["skipped"],
-            failed=result["failed"],
-            redditors_extracted=redditors_extracted,
-            redditors_saved=redditors_saved,
-            message=message
-        )
-        
-        logger.info(f"POST /scrape completed - {response.model_dump()}")
-        return response
-        
-    except Exception as e:
-        logger.error(f"POST /scrape failed with error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Scraping failed: {str(e)}"
-        )
-
+    # Add the long-running task to the background
+    background_tasks.add_task(
+        scrape_and_save,
+        subreddits=subreddits,
+        keywords=keywords,
+        post_limit=post_limit,
+        max_age_days=max_age_days
+    )
+    
+    return ScrapeAcceptedResponse(message="Scraping process started in the background.")
 
 
 @app.get("/suggestions", response_model=SuggestionsListResponse, status_code=status.HTTP_200_OK)
@@ -278,7 +225,6 @@ async def get_suggestions(hours: int = 24):
         )
 
 
-
 @app.get("/redditors", response_model=RedditorsListResponse, status_code=status.HTTP_200_OK)
 async def get_redditors(limit: int = 50, offset: int = 0):
     """
@@ -321,7 +267,8 @@ async def get_redditors(limit: int = 50, offset: int = 0):
                 is_active=r["is_active"],
                 source_posts=r["source_posts"],
                 first_seen=r["first_seen"],
-                last_updated=r["last_updated"]
+                last_updated=r["last_updated"],
+                social_links=r.get("social_links")
             )
             for r in redditors_data
         ]
@@ -341,6 +288,38 @@ async def get_redditors(limit: int = 50, offset: int = 0):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve redditors: {str(e)}"
+        )
+
+
+@app.post("/redditors/fetch-profiles")
+async def fetch_redditor_profiles():
+    """
+    Fetch Reddit profile data for redditors without profile info.
+    
+    Finds redditors with missing profile data (account_age_days = 0 or total_karma = 0)
+    and fetches their real profile data from Reddit API.
+    
+    Returns:
+        Dictionary with fetch results (total, success, failed, not_found)
+        
+    Raises:
+        HTTPException: 500 if fetch fails
+    """
+    try:
+        from services.redditor_profile_fetcher import fetch_profiles_for_new_redditors
+        
+        logger.info("POST /redditors/fetch-profiles - starting profile fetch")
+        
+        results = fetch_profiles_for_new_redditors()
+        
+        logger.info(f"POST /redditors/fetch-profiles completed - {results}")
+        return results
+        
+    except Exception as e:
+        logger.error(f"POST /redditors/fetch-profiles failed with error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch profiles: {str(e)}"
         )
 
 
