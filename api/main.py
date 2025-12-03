@@ -8,7 +8,7 @@ import sys
 import os
 from datetime import datetime
 from typing import Optional, List, Dict
-from fastapi import FastAPI, HTTPException, status, BackgroundTasks
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -72,10 +72,6 @@ class ScrapeRequest(BaseModel):
         description="Only fetch posts from last N days (1-365)"
     )
 
-
-class ScrapeAcceptedResponse(BaseModel):
-    """Response model for POST /scrape when accepted"""
-    message: str = Field(description="Message indicating that the scrape has been started")
 
 class SuggestionResponse(BaseModel):
     """Response model for individual suggestion"""
@@ -141,20 +137,33 @@ class RedditorsListResponse(BaseModel):
 # API Endpoints
 # ============================================================================
 
-@app.post("/scrape", response_model=ScrapeAcceptedResponse, status_code=status.HTTP_202_ACCEPTED)
-async def scrape_reddit(request: ScrapeRequest, background_tasks: BackgroundTasks):
+class ScrapeResponse(BaseModel):
+    """Response model for POST /scrape endpoint"""
+    status: str = Field(description="Overall status (success, partial, failure)")
+    processed: int = Field(description="Number of suggestions successfully saved")
+    skipped: int = Field(description="Number of duplicate posts skipped")
+    failed: int = Field(description="Number of posts that failed to process")
+    redditors_extracted: int = Field(description="Number of unique redditors extracted")
+    redditors_saved: int = Field(description="Number of redditors saved to database")
+
+
+@app.post("/scrape", response_model=ScrapeResponse, status_code=status.HTTP_200_OK)
+async def scrape_reddit(request: ScrapeRequest):
     """
-    Trigger Reddit scraping in the background.
+    Trigger Reddit scraping and wait for completion.
     
-    This endpoint adds the scraping task to a background queue
-    and returns immediately with a 202 Accepted response.
+    This endpoint executes the scraping synchronously and returns
+    detailed results when complete. May take 2-5 minutes depending
+    on the number of subreddits and keywords.
     
     Args:
         request: ScrapeRequest with optional parameters
-        background_tasks: FastAPI background tasks dependency
         
     Returns:
-        ScrapeAcceptedResponse confirming the task has started
+        ScrapeResponse with detailed scraping results
+        
+    Raises:
+        HTTPException: 500 if scraping fails
     """
     from services.scraper_service import scrape_and_save
     from cli.pipeline import DEFAULT_SUBREDDITS, DEFAULT_KEYWORDS
@@ -165,18 +174,34 @@ async def scrape_reddit(request: ScrapeRequest, background_tasks: BackgroundTask
     post_limit = request.post_limit if request.post_limit else 10
     max_age_days = request.max_age_days if request.max_age_days else 120
     
-    logger.info(f"POST /scrape - Adding scrape task to background: subreddits={subreddits}, keywords={keywords}")
+    logger.info(f"POST /scrape - Starting synchronous scrape: subreddits={subreddits}, keywords={keywords}")
     
-    # Add the long-running task to the background
-    background_tasks.add_task(
-        scrape_and_save,
-        subreddits=subreddits,
-        keywords=keywords,
-        post_limit=post_limit,
-        max_age_days=max_age_days
-    )
-    
-    return ScrapeAcceptedResponse(message="Scraping process started in the background.")
+    try:
+        # Execute scraping synchronously
+        result = scrape_and_save(
+            subreddits=subreddits,
+            keywords=keywords,
+            post_limit=post_limit,
+            max_age_days=max_age_days
+        )
+        
+        logger.info(f"POST /scrape completed - {result}")
+        
+        return ScrapeResponse(
+            status=result["status"],
+            processed=result["processed"],
+            skipped=result["skipped"],
+            failed=result["failed"],
+            redditors_extracted=result["redditors_extracted"],
+            redditors_saved=result["redditors_saved"]
+        )
+        
+    except Exception as e:
+        logger.error(f"POST /scrape failed with error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Scraping failed: {str(e)}"
+        )
 
 
 @app.get("/suggestions", response_model=SuggestionsListResponse, status_code=status.HTTP_200_OK)
