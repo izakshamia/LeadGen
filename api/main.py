@@ -436,11 +436,14 @@ async def add_redditor_by_username(username: str):
         HTTPException: 404 if redditor not found, 409 if already exists, 500 if operation fails
     """
     from api.services.redditor_profile_fetcher import fetch_redditor_profile
-    from api.services.supabase_client import supabase
+    from api.services.supabase_client import init_supabase_client
     
     logger.info(f"POST /redditors/add-by-username - username={username}")
     
     try:
+        # Initialize Supabase client
+        supabase = init_supabase_client()
+        
         # Clean username (remove u/ prefix if present)
         clean_username = username.strip().lstrip('u/').lstrip('/u/')
         
