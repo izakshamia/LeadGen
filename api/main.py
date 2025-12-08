@@ -286,29 +286,42 @@ async def get_redditors(limit: int = 50, offset: int = 0):
         redditors_data = get_target_redditors(limit=limit, offset=offset)
         
         # Convert to response models
-        redditors = [
-            RedditorResponse(
-                id=r["id"],
-                username=r["username"],
-                account_age_days=r.get("account_age_days"),
-                total_karma=r.get("total_karma"),
-                comment_karma=r.get("comment_karma"),
-                post_karma=r.get("post_karma"),
-                authenticity_score=r["authenticity_score"],
-                need_score=r["need_score"],
-                priority=r["priority"],
-                is_authentic=r["is_authentic"],
-                is_active=r["is_active"],
-                source_posts=r["source_posts"],
-                first_seen=r["first_seen"],
-                last_updated=r["last_updated"],
-                social_links=r.get("social_links"),
-                contacted_status=r.get("contacted_status", "pending"),
-                contacted_at=r.get("contacted_at"),
-                notes=r.get("notes")
+        redditors = []
+        for r in redditors_data:
+            # Handle social_links - convert list to dict if needed
+            social_links = r.get("social_links")
+            if isinstance(social_links, list):
+                # Convert list format to dict format
+                social_links_dict = {}
+                for link in social_links:
+                    if isinstance(link, dict) and 'platform' in link and 'url' in link:
+                        social_links_dict[link['platform']] = link['url']
+                social_links = social_links_dict if social_links_dict else None
+            elif not isinstance(social_links, dict):
+                social_links = None
+            
+            redditors.append(
+                RedditorResponse(
+                    id=r["id"],
+                    username=r["username"],
+                    account_age_days=r.get("account_age_days"),
+                    total_karma=r.get("total_karma"),
+                    comment_karma=r.get("comment_karma"),
+                    post_karma=r.get("post_karma"),
+                    authenticity_score=r["authenticity_score"],
+                    need_score=r["need_score"],
+                    priority=r["priority"],
+                    is_authentic=r["is_authentic"],
+                    is_active=r["is_active"],
+                    source_posts=r["source_posts"],
+                    first_seen=r["first_seen"],
+                    last_updated=r["last_updated"],
+                    social_links=social_links,
+                    contacted_status=r.get("contacted_status", "pending"),
+                    contacted_at=r.get("contacted_at"),
+                    notes=r.get("notes")
+                )
             )
-            for r in redditors_data
-        ]
         
         response = RedditorsListResponse(
             redditors=redditors,
@@ -465,6 +478,16 @@ async def add_redditor_by_username(username: str):
                 detail=f"Redditor u/{clean_username} not found on Reddit or profile is private"
             )
         
+        # Convert social_links from list to dict format
+        social_links_list = profile.get('social_links', [])
+        social_links_dict = {}
+        if isinstance(social_links_list, list):
+            for link in social_links_list:
+                if isinstance(link, dict) and 'platform' in link and 'url' in link:
+                    social_links_dict[link['platform']] = link['url']
+        elif isinstance(social_links_list, dict):
+            social_links_dict = social_links_list
+        
         # Prepare redditor data for insertion
         redditor_data = {
             'username': clean_username,
@@ -478,7 +501,7 @@ async def add_redditor_by_username(username: str):
             'is_authentic': True,  # Assume authentic for manually added
             'is_active': profile.get('is_active', True),
             'source_posts': [],  # Manually added, no source posts
-            'social_links': profile.get('social_links', {}),
+            'social_links': social_links_dict,
             'contacted_status': 'pending',
             'notes': 'Manually added'
         }
