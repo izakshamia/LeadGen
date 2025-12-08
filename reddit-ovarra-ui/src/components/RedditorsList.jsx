@@ -8,6 +8,8 @@ function RedditorsList({ redditors = [], loading = false, onRefresh }) {
   const [displayCount, setDisplayCount] = useState(20);
   const [searchQuery, setSearchQuery] = useState('');
   const [updatingStatus, setUpdatingStatus] = useState({});
+  const [addUsername, setAddUsername] = useState('');
+  const [isAdding, setIsAdding] = useState(false);
 
   // Loading skeleton component
   const LoadingSkeleton = () => (
@@ -101,7 +103,7 @@ function RedditorsList({ redditors = [], loading = false, onRefresh }) {
     setUpdatingStatus(prev => ({ ...prev, [redditorId]: true }));
     
     try {
-      const response = await fetch(`http://localhost:8003/redditors/${redditorId}/status`, {
+      const response = await fetch(`http://localhost:8002/redditors/${redditorId}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -139,8 +141,87 @@ function RedditorsList({ redditors = [], loading = false, onRefresh }) {
     return styles[status] || styles.pending;
   };
 
+  // Handle adding a redditor by username
+  const handleAddRedditor = async () => {
+    if (!addUsername.trim()) {
+      alert('Please enter a username');
+      return;
+    }
+
+    setIsAdding(true);
+    try {
+      const cleanUsername = addUsername.trim().replace(/^u\//, '').replace(/^\/u\//, '');
+      const response = await fetch(`http://localhost:8002/redditors/add-by-username?username=${encodeURIComponent(cleanUsername)}`, {
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to add redditor');
+      }
+
+      const result = await response.json();
+      alert(`✓ Successfully added u/${cleanUsername}!\n\nAccount age: ${result.redditor.account_age_days} days\nTotal karma: ${result.redditor.total_karma}`);
+      setAddUsername('');
+      if (onRefresh) onRefresh();
+    } catch (error) {
+      if (error.message.includes('409') || error.message.includes('already exists')) {
+        alert(`u/${addUsername} is already in the database.`);
+      } else if (error.message.includes('404') || error.message.includes('not found')) {
+        alert(`u/${addUsername} not found on Reddit or profile is private.`);
+      } else {
+        alert('Error adding redditor: ' + error.message);
+      }
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
   return (
     <div>
+      {/* Add Redditor Box */}
+      <div className="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-200 dark:border-gray-700">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-3">
+          ➕ Add Redditor Manually
+        </h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Enter a Reddit username to fetch their profile and add them to your target list.
+        </p>
+        <div className="flex gap-2">
+          <div className="flex-1 relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400">
+              u/
+            </span>
+            <input
+              type="text"
+              placeholder="username"
+              value={addUsername}
+              onChange={(e) => setAddUsername(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleAddRedditor()}
+              disabled={isAdding}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+          </div>
+          <button
+            onClick={handleAddRedditor}
+            disabled={isAdding || !addUsername.trim()}
+            className="px-6 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:cursor-not-allowed"
+          >
+            {isAdding ? (
+              <span className="flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Adding...
+              </span>
+            ) : (
+              'Add Redditor'
+            )}
+          </button>
+        </div>
+      </div>
+
       {/* Search box */}
       <div className="mb-4">
         <input
@@ -165,7 +246,7 @@ function RedditorsList({ redditors = [], loading = false, onRefresh }) {
                 return;
               }
               try {
-                const response = await fetch('http://localhost:8003/redditors/fetch-profiles?fetch_all=true&limit=100', {
+                const response = await fetch('http://localhost:8002/redditors/fetch-profiles?fetch_all=true&limit=100', {
                   method: 'POST'
                 });
                 const result = await response.json();
@@ -185,7 +266,7 @@ function RedditorsList({ redditors = [], loading = false, onRefresh }) {
           <button
             onClick={async () => {
               try {
-                const response = await fetch('http://localhost:8003/redditors/fetch-profiles', {
+                const response = await fetch('http://localhost:8002/redditors/fetch-profiles', {
                   method: 'POST'
                 });
                 const result = await response.json();

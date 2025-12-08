@@ -165,7 +165,7 @@ async def scrape_reddit(request: ScrapeRequest):
     Raises:
         HTTPException: 500 if scraping fails
     """
-    from services.scraper_service import scrape_and_save
+    from api.services.scraper_service import scrape_and_save
     from cli.pipeline import DEFAULT_SUBREDDITS, DEFAULT_KEYWORDS
     
     # Use defaults from pipeline.py if not provided
@@ -221,7 +221,7 @@ async def get_suggestions(hours: int = 24):
     Raises:
         HTTPException: 500 if database query fails
     """
-    from services.supabase_client import get_recent_suggestions
+    from api.services.supabase_client import get_recent_suggestions
     
     logger.info(f"GET /suggestions - hours={hours}")
     
@@ -277,7 +277,7 @@ async def get_redditors(limit: int = 50, offset: int = 0):
     Raises:
         HTTPException: 500 if database query fails
     """
-    from services.supabase_client import get_target_redditors
+    from api.services.supabase_client import get_target_redditors
     
     logger.info(f"GET /redditors - limit={limit}, offset={offset}")
     
@@ -350,11 +350,11 @@ async def fetch_redditor_profiles(fetch_all: bool = False, limit: int = 100):
     """
     try:
         if fetch_all:
-            from services.redditor_profile_fetcher import fetch_profiles_for_all_redditors
+            from api.services.redditor_profile_fetcher import fetch_profiles_for_all_redditors
             logger.info(f"POST /redditors/fetch-profiles - fetching ALL profiles (limit={limit})")
             results = fetch_profiles_for_all_redditors(limit=limit)
         else:
-            from services.redditor_profile_fetcher import fetch_profiles_for_new_redditors
+            from api.services.redditor_profile_fetcher import fetch_profiles_for_new_redditors
             logger.info("POST /redditors/fetch-profiles - fetching profiles for new redditors")
             results = fetch_profiles_for_new_redditors()
         
@@ -387,7 +387,7 @@ async def update_redditor_status(redditor_id: str, request: UpdateRedditorStatus
     Raises:
         HTTPException: 404 if redditor not found, 500 if update fails
     """
-    from services.supabase_client import update_redditor_status
+    from api.services.supabase_client import update_redditor_status
     
     logger.info(f"PATCH /redditors/{redditor_id}/status - status={request.contacted_status}")
     
@@ -418,6 +418,97 @@ async def update_redditor_status(redditor_id: str, request: UpdateRedditorStatus
         )
 
 
+@app.post("/redditors/add-by-username")
+async def add_redditor_by_username(username: str):
+    """
+    Add a redditor to the database by username.
+    
+    Fetches the redditor's profile from Reddit API and adds them to the database
+    with default scoring. This allows manual addition of target redditors.
+    
+    Args:
+        username: Reddit username (without u/ prefix)
+        
+    Returns:
+        Dictionary with the created redditor data
+        
+    Raises:
+        HTTPException: 404 if redditor not found, 409 if already exists, 500 if operation fails
+    """
+    from api.services.redditor_profile_fetcher import fetch_redditor_profile
+    from api.services.supabase_client import supabase
+    
+    logger.info(f"POST /redditors/add-by-username - username={username}")
+    
+    try:
+        # Clean username (remove u/ prefix if present)
+        clean_username = username.strip().lstrip('u/').lstrip('/u/')
+        
+        # Check if redditor already exists
+        existing = supabase.table('target_redditors').select('id, username').eq('username', clean_username).execute()
+        if existing.data and len(existing.data) > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Redditor u/{clean_username} already exists in database"
+            )
+        
+        # Fetch profile from Reddit
+        logger.info(f"Fetching profile for u/{clean_username} from Reddit API")
+        profile = fetch_redditor_profile(clean_username)
+        
+        if not profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Redditor u/{clean_username} not found on Reddit or profile is private"
+            )
+        
+        # Prepare redditor data for insertion
+        redditor_data = {
+            'username': clean_username,
+            'account_age_days': profile.get('account_age_days', 0),
+            'total_karma': profile.get('total_karma', 0),
+            'comment_karma': profile.get('comment_karma', 0),
+            'post_karma': profile.get('post_karma', 0),
+            'authenticity_score': 50,  # Default score
+            'need_score': 50,  # Default score
+            'priority': 'medium',  # Default priority
+            'is_authentic': True,  # Assume authentic for manually added
+            'is_active': profile.get('is_active', True),
+            'source_posts': [],  # Manually added, no source posts
+            'social_links': profile.get('social_links', {}),
+            'contacted_status': 'pending',
+            'notes': 'Manually added'
+        }
+        
+        # Insert into database
+        logger.info(f"Inserting u/{clean_username} into database")
+        result = supabase.table('target_redditors').insert(redditor_data).execute()
+        
+        if not result.data or len(result.data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to insert redditor into database"
+            )
+        
+        created_redditor = result.data[0]
+        logger.info(f"Successfully added u/{clean_username} to database")
+        
+        return {
+            "success": True,
+            "message": f"Successfully added u/{clean_username}",
+            "redditor": created_redditor
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"POST /redditors/add-by-username failed with error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add redditor: {str(e)}"
+        )
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """
@@ -433,7 +524,7 @@ async def health_check():
         200: Service is healthy and database is connected
         503: Service is running but database is unavailable
     """
-    from services.supabase_client import test_connection
+    from api.services.supabase_client import test_connection
     
     logger.info("GET /health - checking service status")
     
